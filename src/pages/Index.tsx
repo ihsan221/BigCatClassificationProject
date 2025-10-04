@@ -1,10 +1,11 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Hero } from "@/components/Hero";
 import { ImageUpload } from "@/components/ImageUpload";
 import { ClassificationResult } from "@/components/ClassificationResult";
 import { SpeciesInfo } from "@/components/SpeciesInfo";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import * as tf from "@tensorflow/tfjs";
 
 interface Prediction {
   label: string;
@@ -16,7 +17,35 @@ const Index = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [model, setModel] = useState<tf.GraphModel | null>(null);
   const uploadRef = useRef<HTMLDivElement>(null);
+
+  const classNames = [
+    "African Leopard",
+    "Caracal", 
+    "Cheetah",
+    "Clouded Leopard",
+    "Jaguar",
+    "Lions",
+    "Ocelot",
+    "Puma",
+    "Snow Leopard",
+    "Tiger"
+  ];
+
+  useEffect(() => {
+    const loadModel = async () => {
+      try {
+        const loadedModel = await tf.loadGraphModel('/model/model.json');
+        setModel(loadedModel);
+        console.log('Model berhasil dimuat');
+      } catch (error) {
+        console.error('Error loading model:', error);
+        toast.error('Gagal memuat model');
+      }
+    };
+    loadModel();
+  }, []);
 
   const handleGetStarted = () => {
     uploadRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -40,26 +69,54 @@ const Index = () => {
       return;
     }
 
+    if (!model) {
+      toast.error("Model belum siap, harap tunggu...");
+      return;
+    }
+
     setIsLoading(true);
     
-    // Simulasi klasifikasi - ganti dengan model deep learning Anda
-    setTimeout(() => {
-      const mockPredictions: Prediction[] = [
-        { label: "Tiger (Panthera tigris)", confidence: 0.89 },
-        { label: "Lion (Panthera leo)", confidence: 0.07 },
-        { label: "Leopard (Panthera pardus)", confidence: 0.04 },
-      ];
+    try {
+      // Load dan preprocess gambar
+      const img = new Image();
+      img.src = selectedImage!;
       
-      setPredictions(mockPredictions);
-      setIsLoading(false);
-      toast.success("Klasifikasi selesai!");
-    }, 2000);
+      await new Promise((resolve) => {
+        img.onload = resolve;
+      });
 
-    // TODO: Implementasi model deep learning Anda di sini
-    // Contoh menggunakan @huggingface/transformers:
-    // const classifier = await pipeline('image-classification', 'your-model-name');
-    // const result = await classifier(selectedImage);
-    // setPredictions(result);
+      // Konversi gambar ke tensor dan resize ke 224x224
+      const tensor = tf.browser.fromPixels(img)
+        .resizeNearestNeighbor([224, 224])
+        .toFloat()
+        .div(tf.scalar(255.0))
+        .expandDims(0);
+
+      // Prediksi
+      const predictions = model.predict(tensor) as tf.Tensor;
+      const predArray = await predictions.data();
+      
+      // Konversi ke format yang dibutuhkan
+      const results: Prediction[] = Array.from(predArray)
+        .map((confidence, index) => ({
+          label: classNames[index],
+          confidence: confidence
+        }))
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, 5);
+
+      setPredictions(results);
+      toast.success("Klasifikasi selesai!");
+      
+      // Cleanup tensors
+      tensor.dispose();
+      predictions.dispose();
+    } catch (error) {
+      console.error('Error during classification:', error);
+      toast.error("Gagal melakukan klasifikasi");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
